@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { Upload, TrendingDown, Tag, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
+import { Upload, TrendingDown, Tag, AlertTriangle, CheckCircle2, FileText, Database } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/components/ui/cn";
@@ -20,6 +20,8 @@ interface Summary {
   totalFlagged: number;
   categories: Record<string, number>;
   transactions: Transaction[];
+  saved?: boolean;
+  saveError?: string;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -161,6 +163,20 @@ export default function FinancePage() {
 
       {summary && (
         <>
+          {/* Save status */}
+          {summary.saved === false && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>Could not save to history: {summary.saveError ?? "DB error"}. Results shown below but will not appear on your dashboard.</span>
+            </div>
+          )}
+          {summary.saved === true && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-500/10 border border-green-500/20 text-sm text-green-400">
+              <Database className="w-4 h-4 shrink-0" />
+              <span>Saved to your history — visible on the dashboard.</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-3">
             <Card className="p-4 text-center">
               <p className="text-xs text-[#6b6b8a] mb-1">Total spent</p>

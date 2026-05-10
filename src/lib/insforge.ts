@@ -122,10 +122,11 @@ export async function insertTransactions(
 }
 
 export async function getTransactions(userId: string, token: string) {
-  return dbRequest<TransactionRow[]>("transactions", {
-    query: `user_id=eq.${userId}&order=date.desc`,
+  const rows = await dbRequest<TransactionRow[]>("transactions", {
+    query: `user_id=eq.${userId}&limit=500`,
     token,
   });
+  return rows.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 // ── Receipt items ──────────────────────────────────────────────────────────
@@ -152,10 +153,11 @@ export async function insertReceiptItems(
 }
 
 export async function getReceiptItems(userId: string, token: string) {
-  return dbRequest<ReceiptItemRow[]>("receipt_items", {
-    query: `user_id=eq.${userId}&order=purchase_date.desc`,
+  const rows = await dbRequest<ReceiptItemRow[]>("receipt_items", {
+    query: `user_id=eq.${userId}&limit=200`,
     token,
   });
+  return rows.sort((a, b) => b.purchase_date.localeCompare(a.purchase_date));
 }
 
 // ── Bills ──────────────────────────────────────────────────────────────────
@@ -177,10 +179,11 @@ export async function insertBill(row: Omit<BillRow, "id">, token: string) {
 }
 
 export async function getBills(userId: string, token: string) {
-  return dbRequest<BillRow[]>("bills", {
-    query: `user_id=eq.${userId}&order=due_date.asc`,
+  const rows = await dbRequest<BillRow[]>("bills", {
+    query: `user_id=eq.${userId}&limit=100`,
     token,
   });
+  return rows.sort((a, b) => a.due_date.localeCompare(b.due_date));
 }
 
 export async function deleteBillById(id: string, userId: string, token: string) {
@@ -209,8 +212,9 @@ export async function insertGymCheckin(userId: string, token: string) {
 }
 
 export async function getGymCheckins(userId: string, token: string) {
-  return dbRequest<GymCheckinRow[]>("gym_checkins", {
-    query: `user_id=eq.${userId}&order=checkin_date.desc`,
+  const rows = await dbRequest<GymCheckinRow[]>("gym_checkins", {
+    query: `user_id=eq.${userId}&limit=365`,
     token,
   });
+  return rows.sort((a, b) => b.checkin_date.localeCompare(a.checkin_date));
 }

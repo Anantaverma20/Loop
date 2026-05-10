@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Camera, Upload, AlertTriangle, CheckCircle2, SkipForward, ImagePlus } from "lucide-react";
+import { Camera, Upload, AlertTriangle, CheckCircle2, SkipForward, ImagePlus, Database } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/components/ui/cn";
@@ -18,6 +18,8 @@ interface ScanResult {
   date: string | null;
   items: ScannedItem[];
   total: number | null;
+  saved?: boolean;
+  saveError?: string;
 }
 
 export default function ReceiptsPage() {
@@ -153,6 +155,20 @@ export default function ReceiptsPage() {
       {/* Results */}
       {result && (
         <div className="space-y-4 animate-slide-up">
+          {/* Save status */}
+          {result.saved === false && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>Could not save to history: {result.saveError ?? "DB error"}. Results shown but will not appear on your dashboard.</span>
+            </div>
+          )}
+          {result.saved === true && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-500/10 border border-green-500/20 text-sm text-green-400">
+              <Database className="w-4 h-4 shrink-0" />
+              <span>Saved to your history — visible on the dashboard.</span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div>
               {result.store && <p className="font-semibold text-[#f0f0f5]">{result.store}</p>}

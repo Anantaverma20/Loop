@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { parseReceiptImage, checkItemsAgainstHealthGoals } from "@/lib/openai";
-
-const INSFORGE_URL = process.env.INSFORGE_URL ?? "";
-const INSFORGE_ANON_KEY = process.env.INSFORGE_ANON_KEY ?? "";
+import { insertReceiptItems, getGoals } from "@/lib/insforge";
 
 function getAuth() {
   const jar = cookies();
@@ -11,49 +9,6 @@ function getAuth() {
     token: jar.get("loop_token")?.value ?? "",
     userId: jar.get("loop_user_id")?.value ?? "",
   };
-}
-
-async function getHealthGoals(userId: string, token: string): Promise<string> {
-  try {
-    const res = await fetch(
-      `${INSFORGE_URL}/api/database/records/goals?user_id=eq.${userId}&limit=1`,
-      { headers: { Authorization: `Bearer ${token}`, apikey: INSFORGE_ANON_KEY } }
-    );
-    if (!res.ok) return "";
-    const data = await res.json();
-    const goals = Array.isArray(data) ? data[0] : data;
-    return goals?.health_goals?.join(", ") ?? "";
-  } catch { return ""; }
-}
-
-async function saveReceiptItems(
-  items: { item_name: string; price: number; flagged: boolean; flag_reason: string }[],
-  userId: string,
-  purchaseDate: string,
-  token: string
-) {
-  if (!items.length) return;
-  const rows = items.map((item) => ({
-    user_id: userId,
-    item_name: item.item_name,
-    price: item.price,
-    purchase_date: purchaseDate,
-    flagged: item.flagged,
-    flag_reason: item.flag_reason,
-  }));
-  try {
-    await fetch(`${INSFORGE_URL}/api/database/records/receipt_items`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        apikey: INSFORGE_ANON_KEY,
-      },
-      body: JSON.stringify(rows),
-    });
-  } catch (e) {
-    console.error("Failed to save receipt items:", e);
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -74,7 +29,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 2: Fetch user health goals
-    const healthGoals = await getHealthGoals(userId, token);
+    const goals = await getGoals(userId, token).catch(() => []);
+    const healthGoals = goals[0]?.health_goals?.join(", ") ?? "";
 
     // Step 3: Flag items against health goals
     let flaggedItems: { item_name: string; price: number; flagged: boolean; flag_reason: string }[];
@@ -99,15 +55,33 @@ export async function POST(req: NextRequest) {
       }));
     }
 
-    // Step 4: Save to InsForge (fire and forget — don't let DB errors block the response)
+    // Step 4: Save to DB — await and surface errors
     const today = new Date().toISOString().split("T")[0];
-    await saveReceiptItems(flaggedItems, userId, parsed.date ?? today, token);
+    let saveError: string | null = null;
+    try {
+      await insertReceiptItems(
+        flaggedItems.map((item) => ({
+          user_id: userId,
+          item_name: item.item_name,
+          price: item.price,
+          purchase_date: parsed.date ?? today,
+          flagged: item.flagged,
+          flag_reason: item.flag_reason,
+        })),
+        token
+      );
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : "DB save failed";
+      console.error("insertReceiptItems error:", saveError);
+    }
 
     return NextResponse.json({
       store: parsed.store ?? null,
       date: parsed.date ?? null,
       total: parsed.total ?? null,
       items: flaggedItems,
+      saved: saveError === null,
+      saveError,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Receipt scan failed";

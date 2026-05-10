@@ -27,7 +27,6 @@ interface CSVRow {
 }
 
 async function extractTextFromPdfBase64(base64: string): Promise<string> {
-  // Dynamic import keeps pdf-parse out of the webpack bundle (v1 reads test files at init)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfParse = (await import("pdf-parse")).default as any;
   const buffer = Buffer.from(base64, "base64");
@@ -54,7 +53,6 @@ export async function POST(req: NextRequest) {
   let categorized: Awaited<ReturnType<typeof categorizeTransactions>>;
 
   if (pdf) {
-    // PDF path: extract text → GPT-4o parses + categorizes in one shot
     let pdfText: string;
     try {
       pdfText = await extractTextFromPdfBase64(pdf);
@@ -72,7 +70,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No transactions found in this PDF." }, { status: 422 });
     }
   } else {
-    // CSV path: papaparse → normalize → GPT-4o categorize
     const { data: rows, errors } = Papa.parse<CSVRow>(csv!, {
       header: true,
       skipEmptyLines: true,
@@ -84,14 +81,9 @@ export async function POST(req: NextRequest) {
 
     const transactions: RawTransaction[] = rows
       .map((row) => {
-        const date =
-          row.date ?? row.Date ?? row.DATE ?? Object.values(row)[0] ?? "";
-        const description =
-          row.description ?? row.Description ?? row.DESC ??
-          row.name ?? row.Name ?? Object.values(row)[1] ?? "";
-        const rawAmount =
-          row.amount ?? row.Amount ?? row.AMOUNT ??
-          row.debit ?? row.Debit ?? Object.values(row)[2] ?? "0";
+        const date = row.date ?? row.Date ?? row.DATE ?? Object.values(row)[0] ?? "";
+        const description = row.description ?? row.Description ?? row.DESC ?? row.name ?? row.Name ?? Object.values(row)[1] ?? "";
+        const rawAmount = row.amount ?? row.Amount ?? row.AMOUNT ?? row.debit ?? row.Debit ?? Object.values(row)[2] ?? "0";
         const amount = parseFloat(String(rawAmount).replace(/[^0-9.-]/g, "")) || 0;
         return { date: String(date), description: String(description), amount };
       })
@@ -104,11 +96,25 @@ export async function POST(req: NextRequest) {
     categorized = await categorizeTransactions(transactions, savingsTarget);
   }
 
-  // Persist (fire and forget — don't let DB errors block the response)
-  insertTransactions(
-    categorized.map((t) => ({ ...t, user_id: userId })),
-    token
-  ).catch((e) => console.error("insertTransactions failed:", e));
+  // Save to DB — explicitly pick known columns, await and surface errors
+  let saveError: string | null = null;
+  try {
+    await insertTransactions(
+      categorized.map((t) => ({
+        user_id: userId,
+        date: t.date,
+        description: t.description,
+        amount: t.amount,
+        category: t.category,
+        flagged: t.flagged,
+        flag_reason: t.flag_reason || "",
+      })),
+      token
+    );
+  } catch (e) {
+    saveError = e instanceof Error ? e.message : "DB save failed";
+    console.error("insertTransactions error:", saveError);
+  }
 
   const totalSpent = categorized.reduce((sum, t) => sum + Math.abs(t.amount), 0);
   const categories: Record<string, number> = {};
@@ -121,6 +127,8 @@ export async function POST(req: NextRequest) {
     totalFlagged: categorized.filter((t) => t.flagged).length,
     categories,
     transactions: categorized,
+    saved: saveError === null,
+    saveError,
   });
 }
 
