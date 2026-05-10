@@ -27,13 +27,12 @@ interface CSVRow {
 }
 
 async function extractTextFromPdfBase64(base64: string): Promise<string> {
-  // Use the internal lib path — avoids pdf-parse loading its test PDF at module init
+  // Dynamic import keeps pdf-parse out of the webpack bundle (v1 reads test files at init)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfParseModule = await import("pdf-parse/lib/pdf-parse.js") as any;
-  const pdfParse = pdfParseModule.default ?? pdfParseModule;
+  const pdfParse = (await import("pdf-parse")).default as any;
   const buffer = Buffer.from(base64, "base64");
   const result = await pdfParse(buffer);
-  return result.text;
+  return result.text as string;
 }
 
 export async function POST(req: NextRequest) {

@@ -116,10 +116,18 @@ export async function categorizeTransactions(
       messages: [
         {
           role: "system",
-          content: `You are a financial analyst. The user's savings goal is: "${savingsTarget}".
-For each transaction, categorize it and flag it (flagged: true) if it is discretionary spending that works against this savings goal.
-Return raw JSON only — an array of objects with fields: date, description, amount, category, flagged, flag_reason.
-flag_reason should be a short human-readable explanation or empty string if not flagged.`,
+          content: `You are a financial analyst helping someone save money. The user's savings goal is: "${savingsTarget}".
+
+For each transaction:
+1. Assign ONE category from: Food & Dining, Groceries, Transport, Entertainment, Shopping, Health & Fitness, Subscriptions, Utilities, Housing, Travel, Other
+2. Decide whether to flag it.
+
+FLAG (flagged: true) only clearly discretionary/non-essential spending: restaurants, takeaway/food delivery, bars, cafes, entertainment venues, non-essential shopping/clothing, gaming, alcohol, luxury items, multiple streaming services.
+
+DO NOT FLAG: grocery stores (supermarkets), utilities (electricity/gas/water/internet), rent/mortgage payments, insurance, healthcare/pharmacy, petrol/fuel, public transport, ATM withdrawals, salary/income credits.
+
+flag_reason: one short sentence explaining why it works against the savings goal. Empty string "" if not flagged.
+Return a JSON object with key "transactions" — array of: { date, description, amount, category, flagged, flag_reason }`,
         },
         {
           role: "user",
@@ -152,12 +160,18 @@ export async function parseTransactionsFromPdfText(
     messages: [
       {
         role: "system",
-        content: `You are a financial analyst. Extract all transactions from the bank statement text below.
-The user's savings goal is: "${savingsTarget}".
-For each transaction, categorize it and flag it (flagged: true) if it works against the savings goal.
-Return raw JSON only — a JSON object with a "transactions" array. Each item: { date, description, amount, category, flagged, flag_reason }.
-amount should be positive (debit/expense). Skip credits/deposits. flag_reason is a short explanation or empty string.
-Valid categories: Food & Dining, Groceries, Transport, Entertainment, Shopping, Health & Fitness, Subscriptions, Utilities, Housing, Travel, Other.`,
+        content: `You are a financial analyst helping someone save money. The user's savings goal is: "${savingsTarget}".
+
+Extract all expense transactions from the bank statement text. Skip credits, deposits, and refunds.
+
+For each transaction:
+1. Assign ONE category: Food & Dining, Groceries, Transport, Entertainment, Shopping, Health & Fitness, Subscriptions, Utilities, Housing, Travel, Other
+2. Set amount as a positive number (the spend amount).
+3. FLAG (flagged: true) only clearly discretionary/non-essential spending: restaurants, takeaway/food delivery, bars, cafes, entertainment, non-essential shopping, gaming, alcohol, luxury items.
+   DO NOT FLAG: grocery stores, utilities, rent/mortgage, insurance, healthcare, petrol/fuel, public transport.
+4. flag_reason: one short sentence if flagged, empty string "" otherwise.
+
+Return a JSON object with key "transactions" — array of: { date, description, amount, category, flagged, flag_reason }`,
       },
       {
         role: "user",

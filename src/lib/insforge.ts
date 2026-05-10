@@ -107,6 +107,7 @@ export interface TransactionRow {
   amount: number;
   category: string;
   flagged: boolean;
+  flag_reason?: string;
 }
 
 export async function insertTransactions(

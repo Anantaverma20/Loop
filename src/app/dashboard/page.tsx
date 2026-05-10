@@ -1,177 +1,326 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import {
-  CreditCard,
-  Camera,
-  Bell,
-  Dumbbell,
-  MessageSquare,
-  TrendingDown,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronRight,
-  Target,
+  CreditCard, Camera, Bell, Dumbbell, MessageSquare,
+  TrendingDown, AlertTriangle, CheckCircle2, ChevronRight,
+  Target, Tag,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+import { cn } from "@/components/ui/cn";
+import {
+  getGoals, getTransactions, getBills, getGymCheckins, getReceiptItems,
+  type TransactionRow, type BillRow,
+} from "@/lib/insforge";
 
-const modules = [
-  {
-    href: "/dashboard/finance",
-    icon: CreditCard,
-    label: "Finance Tracker",
-    description: "Upload your bank CSV and track spending vs. savings goals",
-    color: "text-violet-400",
-    bg: "bg-violet-500/10",
-    border: "border-violet-500/20",
-    stat: "No data yet",
-    statColor: "text-[#6b6b8a]",
-  },
-  {
-    href: "/dashboard/receipts",
-    icon: Camera,
-    label: "Receipt Scanner",
-    description: "Scan receipts and flag items that hurt your health goals",
-    color: "text-blue-400",
-    bg: "bg-blue-500/10",
-    border: "border-blue-500/20",
-    stat: "No scans yet",
-    statColor: "text-[#6b6b8a]",
-  },
-  {
-    href: "/dashboard/bills",
-    icon: Bell,
-    label: "Bill Reminders",
-    description: "Track upcoming bills with color-coded urgency indicators",
-    color: "text-amber-400",
-    bg: "bg-amber-500/10",
-    border: "border-amber-500/20",
-    stat: "No bills added",
-    statColor: "text-[#6b6b8a]",
-  },
-  {
-    href: "/dashboard/gym",
-    icon: Dumbbell,
-    label: "Gym Tracker",
-    description: "Check in daily and keep your gym membership accountable",
-    color: "text-green-400",
-    bg: "bg-green-500/10",
-    border: "border-green-500/20",
-    stat: "No check-ins yet",
-    statColor: "text-[#6b6b8a]",
-  },
-];
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-export default function DashboardPage() {
+function gymStreak(checkins: { checkin_date: string }[]): number {
+  if (!checkins.length) return 0;
+  const dates = new Set(checkins.map((c) => c.checkin_date));
+  const today = new Date();
+  let streak = 0;
+  for (let i = 0; i < 365; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().split("T")[0];
+    if (dates.has(ds)) {
+      streak++;
+    } else if (i > 0) {
+      break;
+    }
+  }
+  return streak;
+}
+
+function billsDueSoon(bills: BillRow[], days = 7): BillRow[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() + days);
+  return bills.filter((b) => {
+    const d = new Date(b.due_date);
+    return d >= today && d <= cutoff;
+  });
+}
+
+function currentMonthTx(txs: TransactionRow[]) {
+  const now = new Date();
+  const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return txs.filter((t) => t.date?.startsWith(prefix));
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  "Food & Dining": "text-orange-400",
+  "Groceries": "text-green-400",
+  "Transport": "text-blue-400",
+  "Entertainment": "text-purple-400",
+  "Shopping": "text-pink-400",
+  "Health & Fitness": "text-emerald-400",
+  "Subscriptions": "text-violet-400",
+  "Utilities": "text-yellow-400",
+  "Housing": "text-red-400",
+  "Travel": "text-cyan-400",
+  "Other": "text-gray-400",
+};
+
+// ── page ─────────────────────────────────────────────────────────────────────
+
+export default async function DashboardPage() {
+  const jar = cookies();
+  const token = jar.get("loop_token")?.value ?? "";
+  const userId = jar.get("loop_user_id")?.value ?? "";
+
+  const isAuthed = !!(token && userId);
+
+  const [goalsRes, txRes, billsRes, gymRes, receiptRes] = await Promise.allSettled([
+    isAuthed ? getGoals(userId, token) : Promise.resolve([]),
+    isAuthed ? getTransactions(userId, token) : Promise.resolve([]),
+    isAuthed ? getBills(userId, token) : Promise.resolve([]),
+    isAuthed ? getGymCheckins(userId, token) : Promise.resolve([]),
+    isAuthed ? getReceiptItems(userId, token) : Promise.resolve([]),
+  ]);
+
+  const goal = goalsRes.status === "fulfilled" ? goalsRes.value?.[0] ?? null : null;
+  const allTx = txRes.status === "fulfilled" ? txRes.value : [];
+  const allBills = billsRes.status === "fulfilled" ? billsRes.value : [];
+  const allGym = gymRes.status === "fulfilled" ? gymRes.value : [];
+  const allReceipts = receiptRes.status === "fulfilled" ? receiptRes.value : [];
+
+  const monthTx = currentMonthTx(allTx);
+  const totalSpent = monthTx.reduce((s, t) => s + Math.abs(t.amount), 0);
+  const flaggedTx = allTx.filter((t) => t.flagged);
+  const dueSoon = billsDueSoon(allBills);
+  const streak = gymStreak(allGym);
+  const flaggedReceipts = allReceipts.filter((r) => r.flagged);
+
+  const catTotals: Record<string, number> = {};
+  for (const t of monthTx) {
+    catTotals[t.category] = (catTotals[t.category] ?? 0) + Math.abs(t.amount);
+  }
+  const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 4);
+
+  const recentFlagged = flaggedTx.slice(0, 4);
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-[#6b6b8a] mb-1">Good morning</p>
-          <h1 className="text-2xl md:text-3xl font-semibold text-[#f0f0f5]">
-            Your Loop Dashboard
-          </h1>
+          <p className="text-sm text-[#6b6b8a]">{greeting}</p>
+          <h1 className="text-2xl font-semibold text-[#f0f0f5] mt-0.5">Your Loop Dashboard</h1>
         </div>
-        <Link
-          href="/dashboard/settings"
-          className="text-xs text-[#6b6b8a] hover:text-[#7c6af5] transition-colors"
-        >
+        <Link href="/dashboard/settings" className="text-xs text-[#6b6b8a] hover:text-[#7c6af5] transition-colors">
           Edit goals
         </Link>
       </div>
 
-      {/* Goal snapshot */}
+      {/* Goal banner */}
       <Card className="border-[#7c6af5]/20 bg-[#7c6af5]/5">
-        <CardContent className="p-5 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-[#7c6af5]/20 flex items-center justify-center shrink-0">
-            <Target className="w-5 h-5 text-[#7c6af5]" />
+        <CardContent className="p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#7c6af5]/20 flex items-center justify-center shrink-0">
+            <Target className="w-4 h-4 text-[#7c6af5]" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-[#6b6b8a]">Savings goal</p>
-            <p className="text-base font-semibold text-[#f0f0f5] truncate">
-              Complete onboarding to set your goals
+            <p className="text-xs text-[#6b6b8a]">Savings goal</p>
+            <p className="text-sm font-semibold text-[#f0f0f5] truncate">
+              {goal?.savings_target ?? "Not set — complete onboarding"}
             </p>
           </div>
-          <Link
-            href="/onboarding"
-            className="shrink-0 text-xs font-medium text-[#7c6af5] hover:text-[#a89af8] flex items-center gap-1 transition-colors"
-          >
-            Set up
-            <ChevronRight className="w-3 h-3" />
-          </Link>
+          {!goal && (
+            <Link href="/onboarding" className="shrink-0 text-xs font-medium text-[#7c6af5] flex items-center gap-1">
+              Set up <ChevronRight className="w-3 h-3" />
+            </Link>
+          )}
         </CardContent>
       </Card>
 
-      {/* Summary stats row */}
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="p-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <TrendingDown className="w-4 h-4 text-red-400" />
-            <span className="text-xs text-[#6b6b8a]">Flagged</span>
-          </div>
-          <p className="text-xl font-semibold text-[#f0f0f5]">0</p>
-          <p className="text-xs text-[#6b6b8a] mt-0.5">transactions</p>
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-3">
+        <Card className="p-3 text-center">
+          <p className="text-xs text-[#6b6b8a] mb-1">Spent this month</p>
+          <p className="text-lg font-semibold text-[#f0f0f5]">
+            {totalSpent > 0 ? `$${totalSpent.toFixed(0)}` : "—"}
+          </p>
         </Card>
-        <Card className="p-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-            <span className="text-xs text-[#6b6b8a]">Bills due</span>
+        <Card className="p-3 text-center border-red-500/20">
+          <div className="flex items-center justify-center gap-1 mb-1">
+            <TrendingDown className="w-3 h-3 text-red-400" />
+            <p className="text-xs text-[#6b6b8a]">Flagged</p>
           </div>
-          <p className="text-xl font-semibold text-[#f0f0f5]">0</p>
-          <p className="text-xs text-[#6b6b8a] mt-0.5">upcoming</p>
+          <p className="text-lg font-semibold text-red-400">{flaggedTx.length}</p>
         </Card>
-        <Card className="p-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <CheckCircle2 className="w-4 h-4 text-green-400" />
-            <span className="text-xs text-[#6b6b8a]">Gym streak</span>
+        <Card className="p-3 text-center border-amber-500/20">
+          <div className="flex items-center justify-center gap-1 mb-1">
+            <AlertTriangle className="w-3 h-3 text-amber-400" />
+            <p className="text-xs text-[#6b6b8a]">Bills due</p>
           </div>
-          <p className="text-xl font-semibold text-[#f0f0f5]">0</p>
-          <p className="text-xs text-[#6b6b8a] mt-0.5">days</p>
+          <p className="text-lg font-semibold text-amber-400">{dueSoon.length}</p>
+        </Card>
+        <Card className="p-3 text-center border-green-500/20">
+          <div className="flex items-center justify-center gap-1 mb-1">
+            <CheckCircle2 className="w-3 h-3 text-green-400" />
+            <p className="text-xs text-[#6b6b8a]">Gym streak</p>
+          </div>
+          <p className="text-lg font-semibold text-green-400">{streak}d</p>
         </Card>
       </div>
 
-      {/* Module cards grid */}
-      <div>
-        <h2 className="text-sm font-medium text-[#6b6b8a] uppercase tracking-wider mb-4">
-          Modules
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {modules.map(
-            ({ href, icon: Icon, label, description, color, bg, border, stat, statColor }) => (
-              <Link key={href} href={href} className="group">
-                <Card className={`h-full border ${border} hover:border-opacity-60 transition-all duration-200 group-hover:translate-y-[-1px]`}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center`}>
-                        <Icon className={`w-4 h-4 ${color}`} />
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-[#6b6b8a] group-hover:text-[#f0f0f5] transition-colors mt-1" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Top categories */}
+        {topCats.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-[#7c6af5]" />
+                <h2 className="font-semibold text-[#f0f0f5] text-sm">Top spending this month</h2>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2.5 pt-0">
+              {topCats.map(([cat, total]) => {
+                const pct = totalSpent > 0 ? Math.round((total / totalSpent) * 100) : 0;
+                return (
+                  <div key={cat}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className={cn("font-medium", CATEGORY_COLORS[cat] ?? "text-[#f0f0f5]")}>{cat}</span>
+                      <span className="text-[#6b6b8a]">${total.toFixed(0)} ({pct}%)</span>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    <h3 className="font-semibold text-[#f0f0f5] mb-1">{label}</h3>
-                    <p className="text-sm text-[#6b6b8a] mb-3 leading-relaxed">
-                      {description}
-                    </p>
-                    <p className={`text-xs font-medium ${statColor}`}>{stat}</p>
-                  </CardContent>
-                </Card>
-              </Link>
-            )
-          )}
+                    <div className="h-1.5 bg-[#1a1a28] rounded-full overflow-hidden">
+                      <div className="h-full bg-[#7c6af5] rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Recent flagged transactions */}
+        {recentFlagged.length > 0 && (
+          <Card className="border-red-500/10">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <h2 className="font-semibold text-[#f0f0f5] text-sm">Recent flagged spending</h2>
+                </div>
+                <Link href="/dashboard/finance" className="text-xs text-[#6b6b8a] hover:text-[#7c6af5]">
+                  See all
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-1 pt-0">
+              {recentFlagged.map((tx, i) => (
+                <div key={i} className="flex justify-between items-start py-1.5 border-b border-[#1e1e2e] last:border-0">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <p className="text-xs font-medium text-[#f0f0f5] truncate">{tx.description}</p>
+                    {tx.flag_reason && <p className="text-xs text-red-400 truncate">{tx.flag_reason}</p>}
+                  </div>
+                  <p className="text-xs font-semibold text-red-400 shrink-0">${Math.abs(tx.amount).toFixed(2)}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Bills due soon */}
+        {dueSoon.length > 0 && (
+          <Card className="border-amber-500/10">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-amber-400" />
+                  <h2 className="font-semibold text-[#f0f0f5] text-sm">Bills due this week</h2>
+                </div>
+                <Link href="/dashboard/bills" className="text-xs text-[#6b6b8a] hover:text-[#7c6af5]">
+                  Manage
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-1 pt-0">
+              {dueSoon.slice(0, 4).map((bill, i) => (
+                <div key={i} className="flex justify-between text-xs py-1.5 border-b border-[#1e1e2e] last:border-0">
+                  <span className="text-[#c0c0d8]">{bill.name}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[#6b6b8a]">{bill.due_date}</span>
+                    <span className="text-amber-400 font-medium">${bill.amount.toFixed(0)}</span>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Receipt health flags */}
+        {flaggedReceipts.length > 0 && (
+          <Card className="border-orange-500/10">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-orange-400" />
+                  <h2 className="font-semibold text-[#f0f0f5] text-sm">Health flags from receipts</h2>
+                </div>
+                <Link href="/dashboard/receipts" className="text-xs text-[#6b6b8a] hover:text-[#7c6af5]">
+                  Scan new
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-1 pt-0">
+              {flaggedReceipts.slice(0, 4).map((item, i) => (
+                <div key={i} className="flex justify-between text-xs py-1.5 border-b border-[#1e1e2e] last:border-0">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <p className="text-[#f0f0f5] font-medium truncate">{item.item_name}</p>
+                    {item.flag_reason && <p className="text-orange-400 truncate">{item.flag_reason}</p>}
+                  </div>
+                  <span className="text-orange-400 font-medium shrink-0">${item.price.toFixed(2)}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Module quick-links */}
+      <div>
+        <h2 className="text-xs font-medium text-[#6b6b8a] uppercase tracking-wider mb-3">Modules</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { href: "/dashboard/finance", icon: CreditCard, label: "Finance", color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/20", stat: monthTx.length > 0 ? `${monthTx.length} txns` : "No data" },
+            { href: "/dashboard/receipts", icon: Camera, label: "Receipts", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20", stat: allReceipts.length > 0 ? `${allReceipts.length} items` : "No scans" },
+            { href: "/dashboard/bills", icon: Bell, label: "Bills", color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20", stat: allBills.length > 0 ? `${allBills.length} tracked` : "None added" },
+            { href: "/dashboard/gym", icon: Dumbbell, label: "Gym", color: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/20", stat: allGym.length > 0 ? `${allGym.length} check-ins` : "No check-ins" },
+          ].map(({ href, icon: Icon, label, color, bg, border, stat }) => (
+            <Link key={href} href={href} className="group">
+              <Card className={`border ${border} hover:border-opacity-60 transition-all duration-200 group-hover:-translate-y-0.5`}>
+                <CardContent className="p-4">
+                  <div className={`w-8 h-8 rounded-xl ${bg} flex items-center justify-center mb-3`}>
+                    <Icon className={`w-4 h-4 ${color}`} />
+                  </div>
+                  <p className="font-semibold text-[#f0f0f5] text-sm mb-0.5">{label}</p>
+                  <p className="text-xs text-[#6b6b8a]">{stat}</p>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       </div>
 
       {/* Loop Chat CTA */}
       <Link href="/dashboard/chat">
-        <Card className="border-[#7c6af5]/30 hover:border-[#7c6af5]/50 transition-all duration-200 cursor-pointer group">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[#7c6af5]/15 flex items-center justify-center shrink-0">
-              <MessageSquare className="w-5 h-5 text-[#7c6af5]" />
+        <Card className="border-[#7c6af5]/30 hover:border-[#7c6af5]/50 transition-all cursor-pointer group">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[#7c6af5]/15 flex items-center justify-center shrink-0">
+              <MessageSquare className="w-4 h-4 text-[#7c6af5]" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-[#f0f0f5] mb-0.5">Ask Loop anything</p>
-              <p className="text-sm text-[#6b6b8a]">
-                &ldquo;Am I on track with my savings goal this month?&rdquo;
+              <p className="font-semibold text-[#f0f0f5] text-sm">Ask Loop anything</p>
+              <p className="text-xs text-[#6b6b8a]">
+                {flaggedTx.length > 0
+                  ? `You have ${flaggedTx.length} flagged transactions — ask Loop for advice`
+                  : '"Am I on track with my savings goal this month?"'}
               </p>
             </div>
             <ChevronRight className="w-4 h-4 text-[#6b6b8a] group-hover:text-[#7c6af5] transition-colors shrink-0" />
