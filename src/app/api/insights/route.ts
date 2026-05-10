@@ -46,30 +46,40 @@ export async function GET() {
   }
   const topMerchants = Object.entries(merchantCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
-  const prompt = `You are Loop, a personal accountability AI. Give the user 3-4 smart, specific insights based on their actual data.
+  const hasReceiptData = receiptData.length > 0;
+  const hasTxData = txData.length > 0;
 
-GOALS:
-- Savings goal: "${goal?.savings_target ?? "Not set"}"
-- Health goals: "${goal?.health_goals?.join(", ") ?? "Not set"}"
+  const prompt = `You are Loop, a personal accountability AI agent. Generate 3-4 smart insights based ONLY on the data provided below. Never invent data or assume something is fine just because data is missing.
 
-SPENDING DATA (${txData.length} transactions, $${totalSpent.toFixed(2)} total):
-- Flagged discretionary spending: ${flaggedTx.length} transactions = $${flaggedSpent.toFixed(2)}
-- Top flagged transactions: ${flaggedTx.slice(0, 6).map((t) => `${t.description} ($${Math.abs(t.amount).toFixed(2)})`).join(" | ")}
-- Repeat offenders: ${topMerchants.map(([m, c]) => `${m} × ${c}`).join(", ")}
-- Top spending categories: ${topCats.map(([c, a]) => `${c} $${a.toFixed(0)}`).join(", ")}
+=== USER GOALS ===
+Savings goal: "${goal?.savings_target ?? "Not set"}"
+Health goals: "${goal?.health_goals?.join(", ") ?? "Not set"}"
 
-HEALTH DATA (${receiptData.length} receipt items scanned):
-- Items conflicting with health goals: ${flaggedReceipts.length}
-- Flagged items: ${flaggedReceipts.slice(0, 6).map((r) => r.item_name).join(", ")}
+=== FINANCIAL TRANSACTIONS (${txData.length} total, $${totalSpent.toFixed(2)} spent) ===
+${hasTxData ? `Flagged as discretionary overspending (${flaggedTx.length} transactions, $${flaggedSpent.toFixed(2)} total):
+${flaggedTx.slice(0, 8).map((t) => `  - ${t.description}: $${Math.abs(t.amount).toFixed(2)} — ${t.flag_reason || "discretionary"}`).join("\n")}
+Repeat merchants: ${topMerchants.map(([m, c]) => `${m} (×${c})`).join(", ") || "none"}
+Top categories: ${topCats.map(([c, a]) => `${c} $${a.toFixed(0)}`).join(", ")}` : "No transaction data yet."}
 
-INSIGHT RULES:
-- Reference REAL merchant names and dollar amounts from the data above
-- Each insight must suggest ONE specific action
-- Tone: direct coach, not judgmental
-- If a merchant appears multiple times, call it out specifically
-- "type" must be: "warning" (overspending pattern), "tip" (actionable advice), or "praise" (something going well)
+=== RECEIPT SCANS ===
+${hasReceiptData
+  ? `${receiptData.length} items scanned from receipts.
+Items flagged as conflicting with health goals (${flaggedReceipts.length}):
+${flaggedReceipts.length > 0
+  ? flaggedReceipts.slice(0, 6).map((r) => `  - ${r.item_name}: $${r.price.toFixed(2)} — ${r.flag_reason}`).join("\n")
+  : "  None flagged — all scanned items align with health goals."}`
+  : "No receipts scanned yet. DO NOT make any claims about health goal compliance — there is simply no data."}
 
-Return ONLY valid JSON: {"insights":[{"title":"string (max 7 words)","body":"1-2 sentences mentioning real data","type":"warning|tip|praise"}]}`;
+=== INSIGHT RULES (follow strictly) ===
+1. ONLY generate insights about data that actually exists above. Never say "0 conflicts" or "great job" for missing data — that means no data, not a good result.
+2. If a merchant in the financial flags (e.g. Starbucks, McDonalds) also relates to a health goal (e.g. "cut sugar", "eat less junk"), call out BOTH the financial cost AND the health angle in a single insight.
+3. Reference REAL names and dollar amounts from the data. Be specific.
+4. Each insight must include ONE concrete action the user can take.
+5. Tone: direct coach, honest, not preachy.
+6. "type": "warning" = bad pattern to address, "tip" = actionable suggestion, "praise" = something genuinely positive (only use if there is real positive data).
+7. Do NOT use "praise" if the only positive signal is absence of data.
+
+Return ONLY valid JSON: {"insights":[{"title":"max 7 words","body":"1-2 sentences with real data and a concrete action","type":"warning|tip|praise"}]}`;
 
   try {
     const response = await getClient().chat.completions.create({
