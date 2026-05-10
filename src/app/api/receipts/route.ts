@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseReceiptImage, checkItemsAgainstHealthGoals } from "@/lib/openai";
-import { insertReceiptItems, getGoals } from "@/lib/insforge";
+import { insertReceiptItems, getReceiptItems, getGoals } from "@/lib/insforge";
 import {
   getAuth,
   withTokenRefresh,
@@ -94,5 +94,18 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : "Receipt scan failed";
     console.error("Receipts API error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  const ctx = getAuth();
+  if (!ctx.token || !ctx.userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    const items = await getReceiptItems(ctx.userId, ctx.token);
+    return NextResponse.json(items);
+  } catch {
+    return NextResponse.json([], { status: 200 });
   }
 }
