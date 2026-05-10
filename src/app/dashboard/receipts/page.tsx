@@ -49,6 +49,10 @@ export default function ReceiptsPage() {
           body: JSON.stringify({ base64, mimeType: file.type }),
         });
         const data = await res.json();
+        if (res.status === 401) {
+          window.location.href = "/auth?reason=expired";
+          return;
+        }
         if (!res.ok) throw new Error(data.error ?? "Failed to scan receipt");
         if (!data.items || data.items.length === 0) throw new Error("No items found — try a clearer photo.");
         setResult(data);

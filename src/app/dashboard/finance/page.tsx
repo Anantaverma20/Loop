@@ -79,6 +79,10 @@ export default function FinancePage() {
         body,
       });
       const data = await res.json();
+      if (res.status === 401) {
+        window.location.href = "/auth?reason=expired";
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? "Failed to process file");
       setSummary(data);
     } catch (err) {

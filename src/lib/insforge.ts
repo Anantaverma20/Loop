@@ -8,6 +8,35 @@
 const INSFORGE_URL = process.env.INSFORGE_URL ?? "";
 const INSFORGE_ANON_KEY = process.env.INSFORGE_ANON_KEY ?? "";
 
+// ── Auth errors ────────────────────────────────────────────────────────────
+
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("SESSION_EXPIRED");
+    this.name = "SessionExpiredError";
+  }
+}
+
+/** Try to get a new access token using a refresh token. Returns null if InsForge doesn't support it. */
+export async function refreshAccessToken(
+  refreshToken: string
+): Promise<{ access_token: string; refresh_token?: string } | null> {
+  try {
+    const res = await fetch(`${INSFORGE_URL}/api/auth/sessions/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": INSFORGE_ANON_KEY,
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // ── DB helper ──────────────────────────────────────────────────────────────
 
 async function dbRequest<T>(
@@ -33,6 +62,7 @@ async function dbRequest<T>(
   });
 
   const text = await res.text();
+  if (res.status === 401) throw new SessionExpiredError();
   if (!res.ok) throw new Error(`InsForge DB error (${res.status}): ${text}`);
 
   try {

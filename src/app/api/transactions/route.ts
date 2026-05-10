@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import Papa from "papaparse";
 import {
   categorizeTransactions,
@@ -7,14 +6,12 @@ import {
   type RawTransaction,
 } from "@/lib/openai";
 import { insertTransactions, getGoals } from "@/lib/insforge";
-
-function getAuth() {
-  const jar = cookies();
-  return {
-    token: jar.get("loop_token")?.value ?? "",
-    userId: jar.get("loop_user_id")?.value ?? "",
-  };
-}
+import {
+  getAuth,
+  withTokenRefresh,
+  sessionExpiredResponse,
+  applyNewTokens,
+} from "@/lib/withAuth";
 
 interface CSVRow {
   date?: string;
@@ -35,19 +32,18 @@ async function extractTextFromPdfBase64(base64: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
-  const { token, userId } = getAuth();
-  if (!token || !userId) {
+  const ctx = getAuth();
+  if (!ctx.token || !ctx.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const body = await req.json();
   const { csv, pdf } = body as { csv?: string; pdf?: string };
-
   if (!csv && !pdf) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
-  const goals = await getGoals(userId, token).catch(() => []);
+  const goals = await getGoals(ctx.userId, ctx.token).catch(() => []);
   const savingsTarget = goals[0]?.savings_target ?? "save money";
 
   let categorized: Awaited<ReturnType<typeof categorizeTransactions>>;
@@ -59,26 +55,18 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: "Could not read PDF — try a different file." }, { status: 400 });
     }
-
     if (!pdfText.trim()) {
-      return NextResponse.json({ error: "PDF appears to be a scanned image (no extractable text). Try a CSV export instead." }, { status: 400 });
+      return NextResponse.json({ error: "PDF appears to be a scanned image. Try a CSV export instead." }, { status: 400 });
     }
-
     categorized = await parseTransactionsFromPdfText(pdfText, savingsTarget);
-
     if (!categorized.length) {
       return NextResponse.json({ error: "No transactions found in this PDF." }, { status: 422 });
     }
   } else {
-    const { data: rows, errors } = Papa.parse<CSVRow>(csv!, {
-      header: true,
-      skipEmptyLines: true,
-    });
-
+    const { data: rows, errors } = Papa.parse<CSVRow>(csv!, { header: true, skipEmptyLines: true });
     if (errors.length > 0 && rows.length === 0) {
       return NextResponse.json({ error: "Could not parse CSV" }, { status: 400 });
     }
-
     const transactions: RawTransaction[] = rows
       .map((row) => {
         const date = row.date ?? row.Date ?? row.DATE ?? Object.values(row)[0] ?? "";
@@ -88,32 +76,39 @@ export async function POST(req: NextRequest) {
         return { date: String(date), description: String(description), amount };
       })
       .filter((t) => t.description && t.amount !== 0);
-
-    if (transactions.length === 0) {
+    if (!transactions.length) {
       return NextResponse.json({ error: "No valid transactions found in CSV" }, { status: 400 });
     }
-
     categorized = await categorizeTransactions(transactions, savingsTarget);
   }
 
-  // Save to DB — explicitly pick known columns, await and surface errors
+  const rows = categorized.map((t) => ({
+    user_id: ctx.userId,
+    date: t.date,
+    description: t.description,
+    amount: t.amount,
+    category: t.category,
+    flagged: t.flagged,
+    flag_reason: t.flag_reason || "",
+  }));
+
+  // Try insert — auto-refresh token if expired
   let saveError: string | null = null;
-  try {
-    await insertTransactions(
-      categorized.map((t) => ({
-        user_id: userId,
-        date: t.date,
-        description: t.description,
-        amount: t.amount,
-        category: t.category,
-        flagged: t.flagged,
-        flag_reason: t.flag_reason || "",
-      })),
-      token
-    );
-  } catch (e) {
-    saveError = e instanceof Error ? e.message : "DB save failed";
+  let newToken: string | undefined;
+  let newRefreshToken: string | undefined;
+
+  const result = await withTokenRefresh(ctx, (token) => insertTransactions(rows, token)).catch(
+    (e) => ({ expired: false as const, err: e instanceof Error ? e.message : String(e) })
+  );
+
+  if ("expired" in result && result.expired === true) {
+    return sessionExpiredResponse();
+  } else if ("err" in result) {
+    saveError = result.err;
     console.error("insertTransactions error:", saveError);
+  } else if ("newToken" in result) {
+    newToken = result.newToken;
+    newRefreshToken = result.newRefreshToken;
   }
 
   const totalSpent = categorized.reduce((sum, t) => sum + Math.abs(t.amount), 0);
@@ -122,7 +117,7 @@ export async function POST(req: NextRequest) {
     categories[t.category] = (categories[t.category] ?? 0) + Math.abs(t.amount);
   }
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     totalSpent,
     totalFlagged: categorized.filter((t) => t.flagged).length,
     categories,
@@ -130,14 +125,17 @@ export async function POST(req: NextRequest) {
     saved: saveError === null,
     saveError,
   });
+
+  if (newToken) applyNewTokens(res, newToken, newRefreshToken);
+  return res;
 }
 
 export async function GET() {
-  const { token, userId } = getAuth();
-  if (!token || !userId) {
+  const ctx = getAuth();
+  if (!ctx.token || !ctx.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { getTransactions } = await import("@/lib/insforge");
-  const rows = await getTransactions(userId, token);
+  const rows = await getTransactions(ctx.userId, ctx.token);
   return NextResponse.json(rows);
 }

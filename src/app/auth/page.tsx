@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Logo } from "@/components/ui/Logo";
 import { Card, CardContent } from "@/components/ui/Card";
 
@@ -21,6 +22,17 @@ async function generateChallenge(verifier: string): Promise<string> {
 export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const params = useSearchParams();
+  const sessionExpired = params.get("reason") === "expired";
+
+  useEffect(() => {
+    // Clear stale cookies when redirected here due to expiry
+    if (sessionExpired) {
+      document.cookie = "loop_token=; Max-Age=0; path=/";
+      document.cookie = "loop_user_id=; Max-Age=0; path=/";
+      document.cookie = "loop_refresh_token=; Max-Age=0; path=/";
+    }
+  }, [sessionExpired]);
 
   const handleGoogle = async () => {
     setLoading(true);
@@ -67,6 +79,12 @@ export default function AuthPage() {
         <div className="flex justify-center mb-10">
           <Logo size="lg" />
         </div>
+
+        {sessionExpired && (
+          <div className="mb-6 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-400 text-center">
+            Your session expired — please sign in again to continue.
+          </div>
+        )}
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-semibold text-[#f0f0f5] mb-2">Welcome to Loop</h1>
